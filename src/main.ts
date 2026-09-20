@@ -1,7 +1,7 @@
 // The internal resolution. This is your game world's resolution.
 // Every coordinate in your game is a pixel of THIS buffer.
-const VIEW_WIDTH = 320;
-const VIEW_HEIGHT = 180;
+const VIEW_WIDTH = 640;
+const VIEW_HEIGHT = 384;
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -9,7 +9,7 @@ const ctx = canvas.getContext('2d')!;
 // Compute the largest whole-number scale that fits the window,
 // and set the canvas's CSS size to match.
 function fitCanvas() {
-  // How many whole 320px-wide columns fit? How many 180px rows?
+  // How many whole 640px-wide columns fit? How many 384px rows?
   // Take the smaller of the two so the whole canvas fits.
   const scale = Math.max(
     1,
