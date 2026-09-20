@@ -1,16 +1,10 @@
-// The internal resolution. This is your game world's resolution.
-// Every coordinate in your game is a pixel of THIS buffer.
 const VIEW_WIDTH = 640;
-const VIEW_HEIGHT = 384;
+const VIEW_HEIGHT = 368;
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 
-// Compute the largest whole-number scale that fits the window,
-// and set the canvas's CSS size to match.
 function fitCanvas() {
-  // How many whole 640px-wide columns fit? How many 384px rows?
-  // Take the smaller of the two so the whole canvas fits.
   const scale = Math.max(
     1,
     Math.floor(Math.min(
@@ -18,44 +12,133 @@ function fitCanvas() {
       window.innerHeight / VIEW_HEIGHT
     ))
   );
-  // Set the CSS size. The buffer stays 320x180; only the zoom changes.
   canvas.style.width = `${VIEW_WIDTH * scale}px`;
   canvas.style.height = `${VIEW_HEIGHT * scale}px`;
 }
-
-// Re-fit whenever the window is resized.
 window.addEventListener('resize', fitCanvas);
-fitCanvas(); // and once now, on load
-
-// Turn off the browser's image smoothing. Without this, any time you
-// draw an image at a non-1:1 size, the browser blurs it. Pixel art
-// must never be blurred.
+fitCanvas();
 ctx.imageSmoothingEnabled = false;
 
-function frame() {
-  // Clear the buffer.
+// ------------------------------------------------------------------
+// The fixed-timestep game loop
+// ------------------------------------------------------------------
+
+// One update takes exactly this much time. 60 updates per second.
+const TIMESTEP = 1000 / 60;  // 16.666... milliseconds
+
+// The bank account: leftover time in milliseconds.
+let accumulator = 0;
+
+// When the previous frame ran, in the same time base rAF gives us.
+let lastTime = performance.now();
+
+// --- A test ball so you can SEE the simulation ---
+// Speeds are in pixels PER SECOND. That's the unit that makes
+// frame-rate independence possible.
+const ball1 = { x: 160, y: 90, vx: 120, vy: 90, size: 8 };
+const ball2 = { x: 90, y: 160, vx: 240, vy: 180, size: 16 };
+
+// --- On-screen stats so you can VERIFY the loop ---
+let frameCount = 0;    // frames rendered since last stats refresh
+let updateCount = 0;   // updates run since last stats refresh
+let statsTimer = 0;    // ms accumulated toward the 1-second stats tick
+let fpsDisplay = 0;
+let upsDisplay = 0;
+
+// The simulation. dt is ALWAYS exactly TIMESTEP/1000 seconds.
+function update(dt: number) {
+  updateCount++;
+
+  moveBall(dt, ball1);
+  moveBall(dt, ball2);
+  
+}
+
+function moveBall(dt: number, ball: any)
+{
+  // Move: pixels/second * seconds = pixels this update.
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+
+  // Bounce off the edges of the 320x180 world.
+  if (ball.x < 0) {
+    ball.x = 0;
+    ball.vx = Math.abs(ball.vx);
+  }
+  if (ball.x + ball.size > VIEW_WIDTH) {
+    ball.x = VIEW_WIDTH - ball.size;
+    ball.vx = -Math.abs(ball.vx);
+  }
+  if (ball.y < 0) {
+    ball.y = 0;
+    ball.vy = Math.abs(ball.vy);
+  }
+  if (ball.y + ball.size > VIEW_HEIGHT) {
+    ball.y = VIEW_HEIGHT - ball.size;
+    ball.vy = -Math.abs(ball.vy);
+  }
+}
+
+// The drawing. Runs once per screen frame, at any refresh rate.
+function render() {
+  frameCount++;
+
   ctx.fillStyle = '#1a1c2c';
   ctx.fillRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
 
-  // TEST PATTERN: a 16x16 checkerboard in the top-left corner.
-  // If your scaling is right, every square is a crisp block of
-  // identical monitor pixels. If you see fuzzy edges, scaling is wrong.
-  for (let y = 0; y < 16; y += 8) {
-    for (let x = 0; x < 16; x += 8) {
-      ctx.fillStyle = (x / 8 + y / 8) % 2 === 0 ? '#38b764' : '#2a9d5c';
-      ctx.fillRect(x, y, 8, 8);
-    }
-  }
+  // Floor to integers so the ball stays on pixel boundaries.
+  ctx.fillStyle = '#ffcd75';
+  ctx.fillRect(Math.floor(ball1.x), Math.floor(ball1.y), ball1.size, ball1.size);
 
-  // A single 1x1 pixel. At 4x scale it should be a perfect 4x4 square.
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(40, 40, 1, 1);
+  ctx.fillStyle = '#93ff75';
+  ctx.fillRect(Math.floor(ball2.x), Math.floor(ball2.y), ball2.size, ball2.size);
 
-  // A 16x16 "sprite" outline to check that 16px units stay clean.
-  ctx.strokeStyle = '#ffcd75';
-  ctx.strokeRect(64.5, 64.5, 16, 16);
-
-  requestAnimationFrame(frame);
+  // Stats line: rendered fps on the left, simulation updates/s on the right.
+  ctx.fillStyle = '#3b4252';
+  ctx.font = '8px monospace';
+  ctx.fillText(`${fpsDisplay} fps`, 4, VIEW_HEIGHT - 6);
+  ctx.fillText(`${upsDisplay} ups`, VIEW_WIDTH - 44, VIEW_HEIGHT - 6);
 }
 
-requestAnimationFrame(frame);
+// The loop itself: the heart of the game.
+function loop(currentTime: number) {
+  // 1. How much real time passed since last frame? (milliseconds)
+  let delta = currentTime - lastTime;
+  lastTime = currentTime;
+
+  // 2. Cap the delta. If the tab was backgrounded, delta could be
+  //    5000ms. We don't want to run 300 catch-up updates — we want
+  //    to drop the time and move on. 250ms is a generous cap.
+  if (delta > 250) delta = 250;
+
+  // 3. Deposit the time into the bank.
+  accumulator += delta;
+
+  // 4. Spend it in fixed chunks. Each chunk is one simulation step.
+  //    The `safety` counter is the "spiral of death" guard, explained
+  //    below.
+  let safety = 5;
+  while (accumulator >= TIMESTEP && safety > 0) {
+    update(TIMESTEP / 1000);  // pass SECONDS, not milliseconds
+    accumulator -= TIMESTEP;
+    safety--;
+  }
+
+  // 5. Draw the current state. Once per frame, always.
+  render();
+
+  // 6. Refresh the on-screen stats once per second.
+  statsTimer += delta;
+  if (statsTimer >= 1000) {
+    fpsDisplay = frameCount;
+    upsDisplay = updateCount;
+    frameCount = 0;
+    updateCount = 0;
+    statsTimer -= 1000;
+  }
+
+  // 7. Schedule the next frame.
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
